@@ -89,3 +89,8 @@ API keys must be stored in `backend/.env` only. Do not put them in frontend code
 README.md
 .gitignore
 ```
+
+
+## Demo
+
+https://github.com/JosephAshworth/echoread-article-reader/raw/main/assets/echoread-demo.mp4
