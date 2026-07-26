@@ -1,0 +1,253 @@
+import { useEffect, useState } from 'react'
+import type { ApiErrorResponse, SummariseResponse, Voice } from './types'
+
+function parseErrorMessage(payload: ApiErrorResponse | null, fallback: string): string {
+  if (!payload?.detail) {
+    return fallback
+  }
+
+  if (typeof payload.detail === 'string') {
+    return payload.detail
+  }
+
+  if (Array.isArray(payload.detail) && payload.detail.length > 0) {
+    return payload.detail[0]?.msg ?? fallback
+  }
+
+  return fallback
+}
+
+async function readError(response: Response, fallback: string): Promise<string> {
+  try {
+    const payload = (await response.json()) as ApiErrorResponse
+    return parseErrorMessage(payload, fallback)
+  } catch {
+    return fallback
+  }
+}
+
+function App() {
+  const [url, setUrl] = useState('')
+  const [voices, setVoices] = useState<Voice[]>([])
+  const [selectedVoice, setSelectedVoice] = useState('')
+  const [summary, setSummary] = useState('')
+  const [audioUrl, setAudioUrl] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [loadingVoices, setLoadingVoices] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function fetchVoices() {
+      try {
+        const response = await fetch('/voices')
+        if (!response.ok) {
+          const message = await readError(response, 'Failed to load voices.')
+          throw new Error(message)
+        }
+
+        const data = (await response.json()) as Voice[]
+        if (cancelled) {
+          return
+        }
+
+        setVoices(data)
+        if (data.length > 0) {
+          setSelectedVoice(data[0].voice_id)
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : 'Failed to load voices.')
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingVoices(false)
+        }
+      }
+    }
+
+    void fetchVoices()
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      if (audioUrl) {
+        URL.revokeObjectURL(audioUrl)
+      }
+    }
+  }, [audioUrl])
+
+  async function handleGenerate() {
+    const trimmedUrl = url.trim()
+    if (!trimmedUrl) {
+      setError('Please paste an article URL.')
+      return
+    }
+
+    if (!selectedVoice) {
+      setError('Please select a voice.')
+      return
+    }
+
+    setLoading(true)
+    setError(null)
+    setSummary('')
+    if (audioUrl) {
+      URL.revokeObjectURL(audioUrl)
+      setAudioUrl(null)
+    }
+
+    try {
+      const summariseResponse = await fetch('/summarise', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: trimmedUrl }),
+      })
+
+      if (!summariseResponse.ok) {
+        const message = await readError(
+          summariseResponse,
+          'Failed to generate summary.',
+        )
+        throw new Error(message)
+      }
+
+      const summariseData = (await summariseResponse.json()) as SummariseResponse
+      setSummary(summariseData.summary)
+
+      const speakResponse = await fetch('/speak', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text: summariseData.summary,
+          voice_id: selectedVoice,
+        }),
+      })
+
+      if (!speakResponse.ok) {
+        const message = await readError(speakResponse, 'Failed to generate audio.')
+        throw new Error(message)
+      }
+
+      const audioBlob = await speakResponse.blob()
+      const nextAudioUrl = URL.createObjectURL(audioBlob)
+      setAudioUrl(nextAudioUrl)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Something went wrong.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="min-h-screen bg-slate-950 text-slate-100">
+      <div className="mx-auto flex min-h-screen max-w-3xl flex-col px-4 py-10 sm:px-6">
+        <header className="mb-10 text-center">
+          <p className="mb-2 text-sm font-medium uppercase tracking-[0.2em] text-indigo-400">
+            EchoRead
+          </p>
+          <h1 className="text-4xl font-semibold tracking-tight text-white sm:text-5xl">
+            Turn articles into audio summaries
+          </h1>
+          <p className="mx-auto mt-4 max-w-2xl text-base text-slate-400">
+            Paste a link, pick a voice, and listen to a concise spoken summary in seconds.
+          </p>
+        </header>
+
+        <main className="rounded-2xl border border-slate-800 bg-slate-900/80 p-6 shadow-2xl shadow-black/20 backdrop-blur sm:p-8">
+          <div className="space-y-6">
+            <div>
+              <label htmlFor="url" className="mb-2 block text-sm font-medium text-slate-300">
+                Article URL
+              </label>
+              <input
+                id="url"
+                type="url"
+                value={url}
+                onChange={(event) => setUrl(event.target.value)}
+                placeholder="https://example.com/article"
+                className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30"
+              />
+            </div>
+
+            <div>
+              <label htmlFor="voice" className="mb-2 block text-sm font-medium text-slate-300">
+                Voice
+              </label>
+              <select
+                id="voice"
+                value={selectedVoice}
+                onChange={(event) => setSelectedVoice(event.target.value)}
+                disabled={loadingVoices || voices.length === 0}
+                className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {loadingVoices && <option value="">Loading voices...</option>}
+                {!loadingVoices && voices.length === 0 && (
+                  <option value="">No voices available</option>
+                )}
+                {voices.map((voice) => (
+                  <option key={voice.voice_id} value={voice.voice_id}>
+                    {voice.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => void handleGenerate()}
+              disabled={loading || loadingVoices || voices.length === 0}
+              className="inline-flex w-full items-center justify-center rounded-xl bg-indigo-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-indigo-500 disabled:cursor-not-allowed disabled:bg-indigo-900/60"
+            >
+              {loading ? 'Generating summary and audio...' : 'Generate Summary and Audio'}
+            </button>
+
+            {loading && (
+              <div className="flex items-center gap-3 rounded-xl border border-slate-800 bg-slate-950/70 px-4 py-3 text-sm text-slate-300">
+                <span className="inline-flex h-5 w-5 animate-spin rounded-full border-2 border-indigo-400 border-t-transparent" />
+                <span>Fetching the article, summarising with Claude, and creating audio...</span>
+              </div>
+            )}
+
+            {error && (
+              <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+                {error}
+              </div>
+            )}
+
+            {summary && (
+              <div>
+                <label htmlFor="summary" className="mb-2 block text-sm font-medium text-slate-300">
+                  Summary
+                </label>
+                <textarea
+                  id="summary"
+                  readOnly
+                  value={summary}
+                  rows={8}
+                  className="w-full resize-none rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-slate-200 outline-none"
+                />
+              </div>
+            )}
+
+            {audioUrl && (
+              <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-4">
+                <p className="mb-3 text-sm font-medium text-slate-300">Audio playback</p>
+                <audio controls src={audioUrl} className="w-full">
+                  Your browser does not support the audio element.
+                </audio>
+              </div>
+            )}
+          </div>
+        </main>
+      </div>
+    </div>
+  )
+}
+
+export default App

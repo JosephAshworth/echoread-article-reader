@@ -1,0 +1,9 @@
+.env
+backend/.env
+node_modules/
+__pycache__/
+*.pyc
+dist/
+.vite/
+.DS_Store
+*.log
