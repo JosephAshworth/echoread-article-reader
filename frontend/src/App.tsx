@@ -14,6 +14,15 @@ function parseErrorMessage(payload: ApiErrorResponse | null, fallback: string): 
     return payload.detail[0]?.msg ?? fallback
   }
 
+  if (
+    typeof payload.detail === 'object' &&
+    payload.detail !== null &&
+    !Array.isArray(payload.detail) &&
+    typeof payload.detail.message === 'string'
+  ) {
+    return payload.detail.message
+  }
+
   return fallback
 }
 
@@ -34,6 +43,7 @@ function App() {
   const [summary, setSummary] = useState('')
   const [audioUrl, setAudioUrl] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  const [audioOnlyMode, setAudioOnlyMode] = useState(false)
   const [loadingVoices, setLoadingVoices] = useState(true)
   const [loadingHistory, setLoadingHistory] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -149,6 +159,7 @@ function App() {
     }
 
     setLoading(true)
+    setAudioOnlyMode(false)
     setError(null)
     if (audioUrl) {
       URL.revokeObjectURL(audioUrl)
@@ -182,9 +193,41 @@ function App() {
     }
   }
 
+  async function handleGenerateAudioFromSummary() {
+    const trimmedSummary = summary.trim()
+    if (!trimmedSummary) {
+      setError('Please load or generate a summary first.')
+      return
+    }
+    if (!selectedVoice) {
+      setError('Please select a voice.')
+      return
+    }
+
+    setLoading(true)
+    setAudioOnlyMode(true)
+    setError(null)
+    if (audioUrl) {
+      URL.revokeObjectURL(audioUrl)
+      setAudioUrl(null)
+    }
+
+    try {
+      await generateAudio(trimmedSummary, selectedVoice)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to generate audio.')
+    } finally {
+      setLoading(false)
+      setAudioOnlyMode(false)
+    }
+  }
+
   function handleUseArticleFromHistory(item: HistoryItem) {
     setUrl(item.url)
-    setSummary('')
+    setSummary(item.summary)
+    if (item.voice_id) {
+      setSelectedVoice(item.voice_id)
+    }
     if (audioUrl) {
       URL.revokeObjectURL(audioUrl)
       setAudioUrl(null)
@@ -255,10 +298,25 @@ function App() {
               {loading ? 'Generating summary and audio...' : 'Generate Summary and Audio'}
             </button>
 
+            <button
+              type="button"
+              onClick={() => void handleGenerateAudioFromSummary()}
+              disabled={loading || loadingVoices || voices.length === 0 || !summary.trim()}
+              className="inline-flex w-full items-center justify-center rounded-xl border border-indigo-400/50 bg-slate-950 px-4 py-3 text-sm font-semibold text-indigo-200 transition hover:bg-slate-900 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {loading && audioOnlyMode
+                ? 'Generating audio from current summary...'
+                : 'Generate Audio From Current Summary'}
+            </button>
+
             {loading && (
               <div className="flex items-center gap-3 rounded-xl border border-slate-800 bg-slate-950/70 px-4 py-3 text-sm text-slate-300">
                 <span className="inline-flex h-5 w-5 animate-spin rounded-full border-2 border-indigo-400 border-t-transparent" />
-                <span>Fetching the article, summarising with Claude, and creating audio...</span>
+                <span>
+                  {audioOnlyMode
+                    ? 'Generating audio from the current summary...'
+                    : 'Fetching the article, summarising with Claude, and creating audio...'}
+                </span>
               </div>
             )}
 
@@ -298,7 +356,7 @@ function App() {
           <div className="mb-5">
             <h2 className="text-2xl font-semibold text-white">History</h2>
             <p className="mt-2 text-sm text-slate-400">
-              Use a previous article link again without manually pasting the URL.
+              Use a previous article to restore its URL and saved summary.
             </p>
           </div>
 

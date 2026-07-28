@@ -8,7 +8,7 @@ export interface SummariseResponse {
 }
 
 export interface ApiErrorResponse {
-  detail?: string | { msg?: string }[]
+  detail?: string | { msg?: string }[] | { message?: string }
 }
 
 export interface HistoryItem {

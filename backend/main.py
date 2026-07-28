@@ -1,4 +1,5 @@
 import os
+import time
 from datetime import datetime
 from io import BytesIO
 from typing import Optional
@@ -56,6 +57,31 @@ class HistoryItem(BaseModel):
     summary: str
     voice_id: str
     created_at: datetime
+
+
+def parse_elevenlabs_error(response: requests.Response) -> str:
+    fallback = f"Failed to generate audio with ElevenLabs (status {response.status_code})."
+    try:
+        payload = response.json()
+    except ValueError:
+        return fallback
+
+    if not isinstance(payload, dict):
+        return fallback
+
+    detail = payload.get("detail")
+    if isinstance(detail, str):
+        return detail
+    if isinstance(detail, dict):
+        message = detail.get("message")
+        if isinstance(message, str) and message.strip():
+            return message
+
+    message = payload.get("message")
+    if isinstance(message, str) and message.strip():
+        return message
+
+    return fallback
 
 
 def get_api_keys() -> tuple[str, str]:
@@ -291,39 +317,44 @@ def speak(request: SpeakRequest):
     voice_id = request.voice_id or DEFAULT_VOICE_ID
 
     try:
-        response = requests.post(
-            f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}",
-            headers={
-                "Accept": "audio/mpeg",
-                "Content-Type": "application/json",
-                "xi-api-key": elevenlabs_key,
-            },
-            json={
-                "text": text_content,
-                "model_id": "eleven_multilingual_v2",
-            },
-            timeout=60,
-            stream=True,
-        )
+        for attempt in range(2):
+            response = requests.post(
+                f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}",
+                headers={
+                    "Accept": "audio/mpeg",
+                    "Content-Type": "application/json",
+                    "xi-api-key": elevenlabs_key,
+                },
+                json={
+                    "text": text_content,
+                    "model_id": "eleven_multilingual_v2",
+                },
+                timeout=60,
+                stream=True,
+            )
 
-        if response.status_code != 200:
-            detail = "Failed to generate audio with ElevenLabs."
-            try:
-                error_payload = response.json()
-                if isinstance(error_payload, dict):
-                    detail = error_payload.get("detail", detail)
-            except ValueError:
-                pass
+            if response.status_code == 200:
+                audio_buffer = BytesIO(response.content)
+                return StreamingResponse(
+                    audio_buffer,
+                    media_type="audio/mpeg",
+                    headers={"Content-Disposition": "inline; filename=summary.mp3"},
+                )
+
+            detail = parse_elevenlabs_error(response)
+            is_transient = response.status_code in {429, 500, 502, 503, 504}
+            if attempt == 0 and is_transient:
+                time.sleep(0.8)
+                continue
+
             raise HTTPException(status_code=502, detail=detail)
-
-        audio_buffer = BytesIO(response.content)
-        return StreamingResponse(
-            audio_buffer,
-            media_type="audio/mpeg",
-            headers={"Content-Disposition": "inline; filename=summary.mp3"},
-        )
     except HTTPException:
         raise
+    except requests.RequestException as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Failed to generate audio with ElevenLabs: {exc}",
+        ) from exc
     except Exception as exc:
         raise HTTPException(
             status_code=502,
