@@ -1,11 +1,12 @@
 # EchoRead
 
-EchoRead is a web application that turns any article URL into a concise spoken summary. Paste a link, and EchoRead fetches the article, summarises it with Claude, converts the summary to speech with ElevenLabs, and plays it back in your browser.
+EchoRead is a web application that turns any article URL into a concise spoken summary. Paste a link, and EchoRead fetches the article, summarises it with Claude, converts the summary to speech with ElevenLabs, and plays it back in your browser. It also stores summary history in PostgreSQL so users can revisit recent summaries without re-summarising the same article.
 
 ## Tech Stack
 
 - **Frontend:** React, TypeScript, Tailwind CSS, Vite
 - **Backend:** Python, FastAPI
+- **Database:** PostgreSQL (accessed with async SQLAlchemy + `asyncpg`)
 - **AI Services:**
   - Anthropic Claude (`claude-sonnet-4-6`) for article summarisation
   - ElevenLabs for text-to-speech
@@ -16,6 +17,8 @@ EchoRead is a web application that turns any article URL into a concise spoken s
 2. The backend fetches the page, extracts the main article text, and asks Claude to produce a concise, audio-friendly summary of no more than 150 words.
 3. The frontend displays the summary and sends it to `/speak` with the selected voice.
 4. The backend calls ElevenLabs and streams back MP3 audio for playback in the browser.
+5. After each successful summary, the backend stores the URL, title, summary, selected voice, and timestamp in PostgreSQL.
+6. The frontend loads `/history` to show the latest 20 summaries and lets users reuse them for audio playback.
 
 All external API calls happen on the backend so API keys are never exposed to the client.
 
@@ -23,6 +26,7 @@ All external API calls happen on the backend so API keys are never exposed to th
 
 - Node.js 18+
 - Python 3.10+
+- PostgreSQL 14+
 - An Anthropic API key
 - An ElevenLabs API key
 
@@ -42,7 +46,16 @@ Create `backend/.env`:
 ```env
 ANTHROPIC_API_KEY=your_anthropic_key_here
 ELEVENLABS_API_KEY=your_elevenlabs_key_here
+DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/echoread
 ```
+
+Set up the database (example):
+
+```bash
+createdb echoread
+```
+
+If your database credentials or host differ, update `DATABASE_URL` accordingly.
 
 Start the API server:
 
@@ -60,11 +73,11 @@ npm install
 npm run dev
 ```
 
-The frontend runs at `http://localhost:5173` and proxies `/summarise`, `/speak`, and `/voices` to the backend during development.
+The frontend runs at `http://localhost:5173` and proxies `/summarise`, `/speak`, `/voices`, and `/history` to the backend during development.
 
 ## API Keys
 
-API keys must be stored in `backend/.env` only. Do not put them in frontend code or commit them to git. The root `.gitignore` excludes `.env` files.
+API keys and database credentials must be stored in `backend/.env` only. Do not put them in frontend code or commit them to git. The root `.gitignore` excludes `.env` files.
 
 ## Local Testing
 
@@ -73,6 +86,7 @@ API keys must be stored in `backend/.env` only. Do not put them in frontend code
 3. Confirm the voice dropdown loads.
 4. Paste an article URL and click **Generate Summary and Audio**.
 5. Verify the summary appears and the audio player works.
+6. Verify the **History** section shows the new entry and clicking it restores the summary for audio regeneration.
 
 ## Project Structure
 

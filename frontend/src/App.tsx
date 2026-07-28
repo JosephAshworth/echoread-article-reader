@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { ApiErrorResponse, SummariseResponse, Voice } from './types'
+import type { ApiErrorResponse, HistoryItem, SummariseResponse, Voice } from './types'
 
 function parseErrorMessage(payload: ApiErrorResponse | null, fallback: string): string {
   if (!payload?.detail) {
@@ -29,45 +29,99 @@ async function readError(response: Response, fallback: string): Promise<string> 
 function App() {
   const [url, setUrl] = useState('')
   const [voices, setVoices] = useState<Voice[]>([])
+  const [history, setHistory] = useState<HistoryItem[]>([])
   const [selectedVoice, setSelectedVoice] = useState('')
   const [summary, setSummary] = useState('')
   const [audioUrl, setAudioUrl] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [loadingVoices, setLoadingVoices] = useState(true)
+  const [loadingHistory, setLoadingHistory] = useState(true)
   const [error, setError] = useState<string | null>(null)
+
+  async function fetchHistory() {
+    try {
+      const response = await fetch('/history')
+      if (!response.ok) {
+        const message = await readError(response, 'Failed to load summary history.')
+        throw new Error(message)
+      }
+
+      const data = (await response.json()) as HistoryItem[]
+      setHistory(data)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load summary history.')
+    } finally {
+      setLoadingHistory(false)
+    }
+  }
+
+  async function generateAudio(text: string, voiceId: string): Promise<void> {
+    const speakResponse = await fetch('/speak', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        text,
+        voice_id: voiceId,
+      }),
+    })
+
+    if (!speakResponse.ok) {
+      const message = await readError(speakResponse, 'Failed to generate audio.')
+      throw new Error(message)
+    }
+
+    const audioBlob = await speakResponse.blob()
+    const nextAudioUrl = URL.createObjectURL(audioBlob)
+    setAudioUrl(nextAudioUrl)
+  }
 
   useEffect(() => {
     let cancelled = false
 
-    async function fetchVoices() {
+    async function fetchInitialData() {
       try {
-        const response = await fetch('/voices')
-        if (!response.ok) {
-          const message = await readError(response, 'Failed to load voices.')
+        const [voicesResponse, historyResponse] = await Promise.all([
+          fetch('/voices'),
+          fetch('/history'),
+        ])
+
+        if (!voicesResponse.ok) {
+          const message = await readError(voicesResponse, 'Failed to load voices.')
+          throw new Error(message)
+        }
+        if (!historyResponse.ok) {
+          const message = await readError(historyResponse, 'Failed to load summary history.')
           throw new Error(message)
         }
 
-        const data = (await response.json()) as Voice[]
+        const voicesData = (await voicesResponse.json()) as Voice[]
+        const historyData = (await historyResponse.json()) as HistoryItem[]
         if (cancelled) {
           return
         }
 
-        setVoices(data)
-        if (data.length > 0) {
-          setSelectedVoice(data[0].voice_id)
+        setVoices(voicesData)
+        setHistory(historyData)
+        if (voicesData.length > 0) {
+          setSelectedVoice(voicesData[0].voice_id)
         }
       } catch (err) {
         if (!cancelled) {
-          setError(err instanceof Error ? err.message : 'Failed to load voices.')
+          setError(
+            err instanceof Error
+              ? err.message
+              : 'Failed to load required data for the app.',
+          )
         }
       } finally {
         if (!cancelled) {
           setLoadingVoices(false)
+          setLoadingHistory(false)
         }
       }
     }
 
-    void fetchVoices()
+    void fetchInitialData()
 
     return () => {
       cancelled = true
@@ -96,17 +150,17 @@ function App() {
 
     setLoading(true)
     setError(null)
-    setSummary('')
     if (audioUrl) {
       URL.revokeObjectURL(audioUrl)
       setAudioUrl(null)
     }
 
     try {
+      setSummary('')
       const summariseResponse = await fetch('/summarise', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: trimmedUrl }),
+        body: JSON.stringify({ url: trimmedUrl, voice_id: selectedVoice }),
       })
 
       if (!summariseResponse.ok) {
@@ -119,29 +173,23 @@ function App() {
 
       const summariseData = (await summariseResponse.json()) as SummariseResponse
       setSummary(summariseData.summary)
-
-      const speakResponse = await fetch('/speak', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          text: summariseData.summary,
-          voice_id: selectedVoice,
-        }),
-      })
-
-      if (!speakResponse.ok) {
-        const message = await readError(speakResponse, 'Failed to generate audio.')
-        throw new Error(message)
-      }
-
-      const audioBlob = await speakResponse.blob()
-      const nextAudioUrl = URL.createObjectURL(audioBlob)
-      setAudioUrl(nextAudioUrl)
+      await generateAudio(summariseData.summary, selectedVoice)
+      await fetchHistory()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong.')
     } finally {
       setLoading(false)
     }
+  }
+
+  function handleUseArticleFromHistory(item: HistoryItem) {
+    setUrl(item.url)
+    setSummary('')
+    if (audioUrl) {
+      URL.revokeObjectURL(audioUrl)
+      setAudioUrl(null)
+    }
+    setError(null)
   }
 
   return (
@@ -245,6 +293,59 @@ function App() {
             )}
           </div>
         </main>
+
+        <section className="mt-8 rounded-2xl border border-slate-800 bg-slate-900/80 p-6 shadow-2xl shadow-black/20 backdrop-blur sm:p-8">
+          <div className="mb-5">
+            <h2 className="text-2xl font-semibold text-white">History</h2>
+            <p className="mt-2 text-sm text-slate-400">
+              Use a previous article link again without manually pasting the URL.
+            </p>
+          </div>
+
+          {loadingHistory ? (
+            <div className="rounded-xl border border-slate-800 bg-slate-950/70 px-4 py-3 text-sm text-slate-300">
+              Loading history...
+            </div>
+          ) : history.length === 0 ? (
+            <div className="rounded-xl border border-slate-800 bg-slate-950/70 px-4 py-3 text-sm text-slate-300">
+              No summaries yet. Generate one to see it here.
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {history.map((item) => (
+                <div
+                  key={item.id}
+                  className="w-full rounded-xl border border-slate-800 bg-slate-950/70 p-4 text-left transition hover:border-indigo-500/60 hover:bg-slate-900"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <p className="truncate text-sm font-medium text-indigo-300">{item.url}</p>
+                    <button
+                      type="button"
+                      onClick={() => handleUseArticleFromHistory(item)}
+                      className="shrink-0 rounded-lg border border-indigo-400/50 bg-slate-900 px-3 py-1.5 text-xs font-semibold text-indigo-200 transition hover:bg-slate-800"
+                    >
+                      Use this article
+                    </button>
+                  </div>
+                  <p
+                    className="mt-2 text-sm text-slate-300"
+                    style={{
+                      display: '-webkit-box',
+                      WebkitLineClamp: 2,
+                      WebkitBoxOrient: 'vertical',
+                      overflow: 'hidden',
+                    }}
+                  >
+                    {item.summary}
+                  </p>
+                  <p className="mt-3 text-xs text-slate-500">
+                    {new Date(item.created_at).toLocaleString()}
+                  </p>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
       </div>
     </div>
   )

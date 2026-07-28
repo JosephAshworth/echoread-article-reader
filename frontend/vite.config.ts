@@ -9,6 +9,7 @@ export default defineConfig({
       '/summarise': 'http://localhost:8000',
       '/speak': 'http://localhost:8000',
       '/voices': 'http://localhost:8000',
+      '/history': 'http://localhost:8000',
     },
   },
 })

@@ -10,3 +10,12 @@ export interface SummariseResponse {
 export interface ApiErrorResponse {
   detail?: string | { msg?: string }[]
 }
+
+export interface HistoryItem {
+  id: number
+  url: string
+  title: string | null
+  summary: string
+  voice_id: string
+  created_at: string
+}

@@ -7,3 +7,6 @@ beautifulsoup4
 lxml
 lxml_html_clean
 anthropic
+sqlalchemy
+asyncpg
+greenlet
