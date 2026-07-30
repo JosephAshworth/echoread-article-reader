@@ -6,10 +6,10 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
     proxy: {
-      '/summarise': 'http://localhost:8000',
-      '/speak': 'http://localhost:8000',
-      '/voices': 'http://localhost:8000',
-      '/history': 'http://localhost:8000',
+      '/summarise': 'http://127.0.0.1:8000',
+      '/speak': 'http://127.0.0.1:8000',
+      '/voices': 'http://127.0.0.1:8000',
+      '/history': 'http://127.0.0.1:8000',
     },
   },
 })

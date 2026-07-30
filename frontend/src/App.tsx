@@ -48,6 +48,18 @@ function getProviderDisplay(provider: SummaryProvider): { label: string; model: 
   return { label: 'OpenAI', model: 'gpt-4o-mini' }
 }
 
+function getApiKeyTroubleshootingNote(error: string | null): string | null {
+  if (!error) {
+    return null
+  }
+
+  if (error.toLowerCase().includes('api key is not configured')) {
+    return 'Troubleshooting: add the missing key in backend/.env and restart the backend server.'
+  }
+
+  return null
+}
+
 function App() {
   const [url, setUrl] = useState('')
   const [voices, setVoices] = useState<Voice[]>([])
@@ -63,6 +75,7 @@ function App() {
   const [loadingHistory, setLoadingHistory] = useState(true)
   const [historyProviderFilter, setHistoryProviderFilter] = useState<'all' | SummaryProvider>('all')
   const [error, setError] = useState<string | null>(null)
+  const apiKeyTroubleshootingNote = getApiKeyTroubleshootingNote(error)
   const filteredHistory = history.filter((item) =>
     historyProviderFilter === 'all' ? true : item.summary_provider === historyProviderFilter,
   )
@@ -365,7 +378,10 @@ function App() {
 
             {error && (
               <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
-                {error}
+                <p>{error}</p>
+                {apiKeyTroubleshootingNote && (
+                  <p className="mt-2 text-red-100">{apiKeyTroubleshootingNote}</p>
+                )}
               </div>
             )}
 
