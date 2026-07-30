@@ -3,8 +3,11 @@ export interface Voice {
   name: string
 }
 
+export type SummaryProvider = 'claude' | 'openai'
+
 export interface SummariseResponse {
   summary: string
+  provider: SummaryProvider
 }
 
 export interface ApiErrorResponse {
@@ -17,5 +20,7 @@ export interface HistoryItem {
   title: string | null
   summary: string
   voice_id: string
+  summary_provider: SummaryProvider
+  summary_model: string
   created_at: string
 }

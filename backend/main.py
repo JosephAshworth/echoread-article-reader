@@ -2,10 +2,11 @@ import os
 import time
 from datetime import datetime
 from io import BytesIO
-from typing import Optional
+from typing import Literal, Optional
 
 import anthropic
 import requests
+from openai import OpenAI
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
@@ -19,9 +20,15 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 load_dotenv()
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
 DATABASE_URL = os.getenv("DATABASE_URL")
 DEFAULT_VOICE_ID = "21m00Tcm4TlvDq8ikWAM"  # Rachel - ElevenLabs default voice
+SUMMARY_SYSTEM_PROMPT = (
+    "You are a helpful assistant that produces concise, conversational, "
+    "audio-friendly summaries. Keep summaries to no more than 150 words. "
+    "Write in clear spoken language without bullet points or markdown."
+)
 
 app = FastAPI(title="EchoRead API")
 db_engine: Optional[AsyncEngine] = None
@@ -38,6 +45,7 @@ app.add_middleware(
 class SummariseRequest(BaseModel):
     url: HttpUrl
     voice_id: Optional[str] = None
+    provider: Literal["claude", "openai"] = "claude"
 
 
 class SpeakRequest(BaseModel):
@@ -56,6 +64,8 @@ class HistoryItem(BaseModel):
     title: Optional[str]
     summary: str
     voice_id: str
+    summary_provider: Literal["claude", "openai"]
+    summary_model: str
     created_at: datetime
 
 
@@ -127,8 +137,26 @@ async def ensure_db_ready() -> None:
                         title TEXT NULL,
                         summary TEXT NOT NULL,
                         voice_id TEXT NOT NULL,
+                        summary_provider TEXT NOT NULL DEFAULT 'claude',
+                        summary_model TEXT NOT NULL DEFAULT 'claude-sonnet-4-6',
                         created_at TIMESTAMP NOT NULL DEFAULT NOW()
                     )
+                    """
+                )
+            )
+            await connection.execute(
+                text(
+                    """
+                    ALTER TABLE summaries
+                    ADD COLUMN IF NOT EXISTS summary_provider TEXT NOT NULL DEFAULT 'claude'
+                    """
+                )
+            )
+            await connection.execute(
+                text(
+                    """
+                    ALTER TABLE summaries
+                    ADD COLUMN IF NOT EXISTS summary_model TEXT NOT NULL DEFAULT 'claude-sonnet-4-6'
                     """
                 )
             )
@@ -205,6 +233,8 @@ async def save_summary_to_history(
     title: Optional[str],
     summary: str,
     voice_id: str,
+    summary_provider: Literal["claude", "openai"],
+    summary_model: str,
 ) -> None:
     await ensure_db_ready()
     engine = await get_db_engine()
@@ -217,8 +247,10 @@ async def save_summary_to_history(
                     SET title = :title,
                         summary = :summary,
                         voice_id = :voice_id,
+                        summary_provider = :summary_provider,
+                        summary_model = :summary_model,
                         created_at = NOW()
-                    WHERE url = :url
+                    WHERE url = :url AND summary_provider = :summary_provider
                     """
                 ),
                 {
@@ -226,6 +258,8 @@ async def save_summary_to_history(
                     "title": title,
                     "summary": summary,
                     "voice_id": voice_id,
+                    "summary_provider": summary_provider,
+                    "summary_model": summary_model,
                 },
             )
 
@@ -235,8 +269,12 @@ async def save_summary_to_history(
             await connection.execute(
                 text(
                     """
-                    INSERT INTO summaries (url, title, summary, voice_id)
-                    VALUES (:url, :title, :summary, :voice_id)
+                    INSERT INTO summaries (
+                        url, title, summary, voice_id, summary_provider, summary_model
+                    )
+                    VALUES (
+                        :url, :title, :summary, :voice_id, :summary_provider, :summary_model
+                    )
                     """
                 ),
                 {
@@ -244,6 +282,8 @@ async def save_summary_to_history(
                     "title": title,
                     "summary": summary,
                     "voice_id": voice_id,
+                    "summary_provider": summary_provider,
+                    "summary_model": summary_model,
                 },
             )
     except Exception as exc:
@@ -255,9 +295,10 @@ async def save_summary_to_history(
 
 @app.post("/summarise")
 async def summarise(request: SummariseRequest):
-    get_api_keys()
     url = str(request.url)
     voice_id = request.voice_id or DEFAULT_VOICE_ID
+    provider = request.provider
+    summary_model = "claude-sonnet-4-6" if provider == "claude" else "gpt-4o-mini"
 
     article_text, article_title = extract_article_content(url)
     if len(article_text) < 100:
@@ -266,44 +307,75 @@ async def summarise(request: SummariseRequest):
             detail="The article content was too short to summarise.",
         )
 
-    try:
-        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-        message = client.messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=300,
-            system=(
-                "You are a helpful assistant that produces concise, conversational, "
-                "audio-friendly summaries. Keep summaries to no more than 150 words. "
-                "Write in clear spoken language without bullet points or markdown."
-            ),
-            messages=[
-                {
-                    "role": "user",
-                    "content": (
-                        "Summarise the following article for spoken audio playback:\n\n"
-                        f"{article_text[:12000]}"
-                    ),
-                }
-            ],
-        )
-        summary = message.content[0].text.strip()
-        if not summary:
-            raise ValueError("Empty summary returned")
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(
-            status_code=502,
-            detail=f"Failed to generate summary with Claude: {exc}",
-        ) from exc
+    if provider == "claude":
+        if not ANTHROPIC_API_KEY or ANTHROPIC_API_KEY == "your_key_here":
+            raise HTTPException(
+                status_code=500,
+                detail="Anthropic API key is not configured. Add ANTHROPIC_API_KEY to backend/.env.",
+            )
+        try:
+            client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+            message = client.messages.create(
+                model=summary_model,
+                max_tokens=300,
+                system=SUMMARY_SYSTEM_PROMPT,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": (
+                            "Summarise the following article for spoken audio playback:\n\n"
+                            f"{article_text[:12000]}"
+                        ),
+                    }
+                ],
+            )
+            summary = message.content[0].text.strip()
+            if not summary:
+                raise ValueError("Empty summary returned")
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Failed to generate summary with Claude: {exc}",
+            ) from exc
+    else:
+        if not OPENAI_API_KEY or OPENAI_API_KEY == "your_key_here":
+            raise HTTPException(
+                status_code=500,
+                detail="OpenAI API key is not configured. Add OPENAI_API_KEY to backend/.env.",
+            )
+        try:
+            client = OpenAI(api_key=OPENAI_API_KEY)
+            completion = client.responses.create(
+                model=summary_model,
+                instructions=SUMMARY_SYSTEM_PROMPT,
+                input=(
+                    "Summarise the following article for spoken audio playback:\n\n"
+                    f"{article_text[:12000]}"
+                ),
+                max_output_tokens=300,
+            )
+            summary = (completion.output_text or "").strip()
+            if not summary:
+                raise ValueError("Empty summary returned")
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Failed to generate summary with OpenAI: {exc}",
+            ) from exc
 
     await save_summary_to_history(
         url=url,
         title=article_title,
         summary=summary,
         voice_id=voice_id,
+        summary_provider=provider,
+        summary_model=summary_model,
     )
-    return {"summary": summary}
+    return {"summary": summary, "provider": provider}
 
 
 @app.post("/speak")
@@ -401,12 +473,12 @@ async def history():
             result = await connection.execute(
                 text(
                     """
-                    SELECT id, url, title, summary, voice_id, created_at
+                    SELECT id, url, title, summary, voice_id, summary_provider, summary_model, created_at
                     FROM (
-                        SELECT DISTINCT ON (url)
-                            id, url, title, summary, voice_id, created_at
+                        SELECT DISTINCT ON (url, summary_provider)
+                            id, url, title, summary, voice_id, summary_provider, summary_model, created_at
                         FROM summaries
-                        ORDER BY url, created_at DESC
+                        ORDER BY url, summary_provider, created_at DESC
                     ) AS latest_per_url
                     ORDER BY created_at DESC
                     LIMIT 20
@@ -421,6 +493,8 @@ async def history():
                     "title": row["title"],
                     "summary": row["summary"],
                     "voice_id": row["voice_id"],
+                    "summary_provider": row["summary_provider"],
+                    "summary_model": row["summary_model"],
                     "created_at": row["created_at"],
                 }
                 for row in rows

@@ -1,5 +1,11 @@
 import { useEffect, useState } from 'react'
-import type { ApiErrorResponse, HistoryItem, SummariseResponse, Voice } from './types'
+import type {
+  ApiErrorResponse,
+  HistoryItem,
+  SummariseResponse,
+  SummaryProvider,
+  Voice,
+} from './types'
 
 function parseErrorMessage(payload: ApiErrorResponse | null, fallback: string): string {
   if (!payload?.detail) {
@@ -35,18 +41,31 @@ async function readError(response: Response, fallback: string): Promise<string> 
   }
 }
 
+function getProviderDisplay(provider: SummaryProvider): { label: string; model: string } {
+  if (provider === 'claude') {
+    return { label: 'Claude (Anthropic)', model: 'claude-sonnet-4-6' }
+  }
+  return { label: 'OpenAI', model: 'gpt-4o-mini' }
+}
+
 function App() {
   const [url, setUrl] = useState('')
   const [voices, setVoices] = useState<Voice[]>([])
   const [history, setHistory] = useState<HistoryItem[]>([])
   const [selectedVoice, setSelectedVoice] = useState('')
+  const [selectedProvider, setSelectedProvider] = useState<SummaryProvider>('claude')
+  const [summaryProviderUsed, setSummaryProviderUsed] = useState<SummaryProvider | null>(null)
   const [summary, setSummary] = useState('')
   const [audioUrl, setAudioUrl] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [audioOnlyMode, setAudioOnlyMode] = useState(false)
   const [loadingVoices, setLoadingVoices] = useState(true)
   const [loadingHistory, setLoadingHistory] = useState(true)
+  const [historyProviderFilter, setHistoryProviderFilter] = useState<'all' | SummaryProvider>('all')
   const [error, setError] = useState<string | null>(null)
+  const filteredHistory = history.filter((item) =>
+    historyProviderFilter === 'all' ? true : item.summary_provider === historyProviderFilter,
+  )
 
   async function fetchHistory() {
     try {
@@ -168,10 +187,15 @@ function App() {
 
     try {
       setSummary('')
+      setSummaryProviderUsed(null)
       const summariseResponse = await fetch('/summarise', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: trimmedUrl, voice_id: selectedVoice }),
+        body: JSON.stringify({
+          url: trimmedUrl,
+          voice_id: selectedVoice,
+          provider: selectedProvider,
+        }),
       })
 
       if (!summariseResponse.ok) {
@@ -184,6 +208,7 @@ function App() {
 
       const summariseData = (await summariseResponse.json()) as SummariseResponse
       setSummary(summariseData.summary)
+      setSummaryProviderUsed(summariseData.provider)
       await generateAudio(summariseData.summary, selectedVoice)
       await fetchHistory()
     } catch (err) {
@@ -267,6 +292,22 @@ function App() {
             </div>
 
             <div>
+              <label htmlFor="provider" className="mb-2 block text-sm font-medium text-slate-300">
+                Summary provider
+              </label>
+              <select
+                id="provider"
+                value={selectedProvider}
+                onChange={(event) => setSelectedProvider(event.target.value as SummaryProvider)}
+                disabled={loading}
+                className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <option value="claude">Claude (Anthropic)</option>
+                <option value="openai">OpenAI</option>
+              </select>
+            </div>
+
+            <div>
               <label htmlFor="voice" className="mb-2 block text-sm font-medium text-slate-300">
                 Voice
               </label>
@@ -315,7 +356,9 @@ function App() {
                 <span>
                   {audioOnlyMode
                     ? 'Generating audio from the current summary...'
-                    : 'Fetching the article, summarising with Claude, and creating audio...'}
+                    : `Fetching the article, summarising with ${
+                        selectedProvider === 'claude' ? 'Claude (Anthropic)' : 'OpenAI'
+                      }, and creating audio...`}
                 </span>
               </div>
             )}
@@ -328,9 +371,19 @@ function App() {
 
             {summary && (
               <div>
-                <label htmlFor="summary" className="mb-2 block text-sm font-medium text-slate-300">
-                  Summary
-                </label>
+                <div className="mb-2 flex items-center justify-between gap-3">
+                  <label htmlFor="summary" className="block text-sm font-medium text-slate-300">
+                    Summary
+                  </label>
+                  {summaryProviderUsed && (
+                    <span className="text-xs text-slate-400">
+                      {(() => {
+                        const providerInfo = getProviderDisplay(summaryProviderUsed)
+                        return `Generated with ${providerInfo.label} (${providerInfo.model})`
+                      })()}
+                    </span>
+                  )}
+                </div>
                 <textarea
                   id="summary"
                   readOnly
@@ -354,7 +407,21 @@ function App() {
 
         <section className="mt-8 rounded-2xl border border-slate-800 bg-slate-900/80 p-6 shadow-2xl shadow-black/20 backdrop-blur sm:p-8">
           <div className="mb-5">
-            <h2 className="text-2xl font-semibold text-white">History</h2>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <h2 className="text-2xl font-semibold text-white">History</h2>
+              <select
+                aria-label="Filter history by summary provider"
+                value={historyProviderFilter}
+                onChange={(event) =>
+                  setHistoryProviderFilter(event.target.value as 'all' | SummaryProvider)
+                }
+                className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs font-medium text-slate-200 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30"
+              >
+                <option value="all">All providers</option>
+                <option value="claude">Claude (Anthropic)</option>
+                <option value="openai">OpenAI</option>
+              </select>
+            </div>
             <p className="mt-2 text-sm text-slate-400">
               Use a previous article to restore its URL and saved summary.
             </p>
@@ -364,13 +431,15 @@ function App() {
             <div className="rounded-xl border border-slate-800 bg-slate-950/70 px-4 py-3 text-sm text-slate-300">
               Loading history...
             </div>
-          ) : history.length === 0 ? (
+          ) : filteredHistory.length === 0 ? (
             <div className="rounded-xl border border-slate-800 bg-slate-950/70 px-4 py-3 text-sm text-slate-300">
-              No summaries yet. Generate one to see it here.
+              {history.length === 0
+                ? 'No summaries yet. Generate one to see it here.'
+                : 'No history entries match the selected provider filter.'}
             </div>
           ) : (
             <div className="space-y-3">
-              {history.map((item) => (
+              {filteredHistory.map((item) => (
                 <div
                   key={item.id}
                   className="w-full rounded-xl border border-slate-800 bg-slate-950/70 p-4 text-left transition hover:border-indigo-500/60 hover:bg-slate-900"
@@ -397,6 +466,12 @@ function App() {
                     {item.summary}
                   </p>
                   <p className="mt-3 text-xs text-slate-500">
+                    {(() => {
+                      const providerInfo = getProviderDisplay(item.summary_provider)
+                      return `Model: ${providerInfo.label} (${item.summary_model})`
+                    })()}
+                  </p>
+                  <p className="mt-1 text-xs text-slate-500">
                     {new Date(item.created_at).toLocaleString()}
                   </p>
                 </div>
