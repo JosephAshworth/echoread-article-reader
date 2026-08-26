@@ -67,6 +67,7 @@ function App() {
   const [selectedVoice, setSelectedVoice] = useState('')
   const [selectedProvider, setSelectedProvider] = useState<SummaryProvider>('claude')
   const [summaryProviderUsed, setSummaryProviderUsed] = useState<SummaryProvider | null>(null)
+  const [summaryModelUsed, setSummaryModelUsed] = useState<string | null>(null)
   const [summary, setSummary] = useState('')
   const [audioUrl, setAudioUrl] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
@@ -201,6 +202,7 @@ function App() {
     try {
       setSummary('')
       setSummaryProviderUsed(null)
+      setSummaryModelUsed(null)
       const summariseResponse = await fetch('/summarise', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -222,6 +224,7 @@ function App() {
       const summariseData = (await summariseResponse.json()) as SummariseResponse
       setSummary(summariseData.summary)
       setSummaryProviderUsed(summariseData.provider)
+      setSummaryModelUsed(getProviderDisplay(summariseData.provider).model)
       await generateAudio(summariseData.summary, selectedVoice)
       await fetchHistory()
     } catch (err) {
@@ -263,6 +266,8 @@ function App() {
   function handleUseArticleFromHistory(item: HistoryItem) {
     setUrl(item.url)
     setSummary(item.summary)
+    setSummaryProviderUsed(item.summary_provider)
+    setSummaryModelUsed(item.summary_model)
     if (item.voice_id) {
       setSelectedVoice(item.voice_id)
     }
@@ -395,7 +400,8 @@ function App() {
                     <span className="text-xs text-slate-400">
                       {(() => {
                         const providerInfo = getProviderDisplay(summaryProviderUsed)
-                        return `Generated with ${providerInfo.label} (${providerInfo.model})`
+                        const modelLabel = summaryModelUsed ?? providerInfo.model
+                        return `Generated with ${providerInfo.label} (${modelLabel})`
                       })()}
                     </span>
                   )}
