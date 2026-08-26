@@ -14,8 +14,8 @@ EchoRead is a web application that turns any article URL into a concise spoken s
 ## Tech Stack
 
 - **Frontend:** React, TypeScript, Tailwind CSS, Vite
-- **Backend:** Python, FastAPI
-- **Database:** PostgreSQL (accessed with async SQLAlchemy + `asyncpg`)
+- **Backend:** Node.js, TypeScript, Express.js
+- **Database:** PostgreSQL (accessed with `pg`)
 - **AI Services:**
   - Anthropic Claude (`claude-sonnet-4-6`) or OpenAI (`gpt-4o-mini`) for article summarisation
   - ElevenLabs for text-to-speech
@@ -36,7 +36,6 @@ All external API calls happen on the backend so API keys are never exposed to th
 ## Prerequisites
 
 - Node.js 18+
-- Python 3.10+
 - PostgreSQL 14+
 - An Anthropic API key
 - An OpenAI API key (if you want to use OpenAI summaries as well)
@@ -48,9 +47,7 @@ All external API calls happen on the backend so API keys are never exposed to th
 
 ```bash
 cd backend
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+npm install
 ```
 
 Create `backend/.env`:
@@ -59,7 +56,8 @@ Create `backend/.env`:
 ANTHROPIC_API_KEY=your_anthropic_key_here
 OPENAI_API_KEY=your_openai_key_here
 ELEVENLABS_API_KEY=your_elevenlabs_key_here
-DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/echoread
+LLM_PROVIDER=anthropic
+DATABASE_URL=postgres://postgres:postgres@localhost:5432/echoread
 ```
 
 Set up the database (example):
@@ -73,10 +71,10 @@ If your database credentials or host differ, update `DATABASE_URL` accordingly.
 Start the API server:
 
 ```bash
-uvicorn main:app --reload
+npm run dev
 ```
 
-The backend runs at `http://localhost:8000`.
+The backend runs at `http://localhost:8000` by default.
 
 ### 2. Frontend
 
@@ -108,9 +106,15 @@ API keys and database credentials must be stored in `backend/.env` only. Do not 
 
 ```text
 /backend
-  main.py
-  requirements.txt
-  .env
+  src/
+    app.ts
+    server.ts
+    routes/
+    services/
+    db/
+  package.json
+  tsconfig.json
+  .env.example
 /frontend
   src/
     App.tsx
