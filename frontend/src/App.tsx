@@ -41,6 +41,12 @@ async function readError(response: Response, fallback: string): Promise<string> 
   }
 }
 
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '')
+
+function apiUrl(path: string): string {
+  return `${API_BASE_URL}${path}`
+}
+
 function getProviderDisplay(provider: SummaryProvider): { label: string; model: string } {
   if (provider === 'claude') {
     return { label: 'Claude (Anthropic)', model: 'claude-sonnet-4-6' }
@@ -83,7 +89,7 @@ function App() {
 
   async function fetchHistory() {
     try {
-      const response = await fetch('/history')
+      const response = await fetch(apiUrl('/history'))
       if (!response.ok) {
         const message = await readError(response, 'Failed to load summary history.')
         throw new Error(message)
@@ -99,7 +105,7 @@ function App() {
   }
 
   async function generateAudio(text: string, voiceId: string): Promise<void> {
-    const speakResponse = await fetch('/speak', {
+    const speakResponse = await fetch(apiUrl('/speak'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -124,8 +130,8 @@ function App() {
     async function fetchInitialData() {
       try {
         const [voicesResponse, historyResponse] = await Promise.all([
-          fetch('/voices'),
-          fetch('/history'),
+          fetch(apiUrl('/voices')),
+          fetch(apiUrl('/history')),
         ])
 
         if (!voicesResponse.ok) {
@@ -203,7 +209,7 @@ function App() {
       setSummary('')
       setSummaryProviderUsed(null)
       setSummaryModelUsed(null)
-      const summariseResponse = await fetch('/summarise', {
+      const summariseResponse = await fetch(apiUrl('/summarise'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

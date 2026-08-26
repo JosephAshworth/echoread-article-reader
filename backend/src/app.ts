@@ -10,10 +10,14 @@ export const app = express();
 
 app.use(
   cors({
-    origin: "http://localhost:5173",
-    credentials: true,
+    origin: [
+      "http://localhost:5173",
+      "https://storage.googleapis.com",
+      "https://echoread-frontend-693200397320.europe-west2.run.app",
+    ],
   }),
 );
+
 app.use(express.json({ limit: "1mb" }));
 
 app.use("/summarise", summariseRouter);

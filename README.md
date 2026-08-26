@@ -16,6 +16,8 @@ EchoRead is a web application that turns any article URL into a concise spoken s
 - **Frontend:** React, TypeScript, Tailwind CSS, Vite
 - **Backend:** Node.js, TypeScript, Express.js
 - **Database:** PostgreSQL (accessed with `pg`)
+- **Containerization:** Docker (multi-stage builds for backend and frontend)
+- **Deployment:** Google Cloud Run (GCP)
 - **AI Services:**
   - Anthropic Claude (`claude-sonnet-4-6`) or OpenAI (`gpt-4o-mini`) for article summarisation
   - ElevenLabs for text-to-speech
@@ -84,7 +86,55 @@ npm install
 npm run dev
 ```
 
-The frontend runs at `http://localhost:5173` and proxies `/summarise`, `/speak`, `/voices`, and `/history` to the backend during development.
+Set frontend API base URL via environment files:
+
+`frontend/.env.development`
+
+```env
+VITE_API_BASE_URL=http://localhost:8000
+```
+
+`frontend/.env.production`
+
+```env
+VITE_API_BASE_URL=https://echoread-api-693200397320.europe-west2.run.app
+```
+
+The frontend runs at `http://localhost:5173` and calls the backend using `VITE_API_BASE_URL`.
+
+## Docker
+
+### Backend container
+
+Build:
+
+```bash
+cd backend
+docker build -t echoread-backend .
+```
+
+Run:
+
+```bash
+docker run --rm -p 8000:8000 --env-file .env echoread-backend
+```
+
+### Frontend container
+
+Build:
+
+```bash
+cd frontend
+docker build -t echoread-frontend .
+```
+
+Run:
+
+```bash
+docker run --rm -p 5173:80 echoread-frontend
+```
+
+The frontend image is served by Nginx with SPA route fallback (`try_files ... /index.html`) for React Router.
 
 ## API Keys
 
@@ -114,12 +164,16 @@ API keys and database credentials must be stored in `backend/.env` only. Do not 
     db/
   package.json
   tsconfig.json
+  Dockerfile
   .env.example
+  .dockerignore
 /frontend
   src/
     App.tsx
     types.ts
   vite.config.ts
+  Dockerfile
+  nginx.conf
 README.md
 .gitignore
 ```
